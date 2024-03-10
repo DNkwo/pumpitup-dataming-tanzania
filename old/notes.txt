@@ -1,0 +1,44 @@
+Objective: dataset about water pumps (functional, functional needs repair etc etc)
+
+Task: Build ML model predicting water pump status
+
+
+- Tasks: 
+
+-Evaluate different machine learning models
+
+- Looki into hyper parameter optimisation of those models
+
+
+Resources:
+
+- Scikit-learn library (additionall pandas and numpy)
+
+Part 1:
+
+Tasks:
+
+- Dealing with categorical features. (especially some with high cardinality)
+
+	- Consider three types of encoding (OneHotEncoder, Ordinal Encoder and TargetEncoder)
+
+- Dealing with missing values.
+
+- Scaling numerical values.
+	
+	- Consider (No Scaling, StandardScaler)
+
+- Dealing with datetime features.
+
+- Study five different ML model families:
+
+LogisticRegression, RandomForestClassifier, GradientBoostingClassifier, HistGradientBoostingClassifier and MLPClassifier
+(do 5-fold  cross validation to make things statistically sound)
+
+
+
+
+
+
+
+
