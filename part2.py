@@ -1,5 +1,5 @@
 import pandas as pd
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, train_test_split
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, TargetEncoder, StandardScaler, FunctionTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
@@ -11,27 +11,77 @@ from sklearn.metrics import accuracy_score
 import numpy as np
 import time
 
+#HPO
+import optuna
+
 from preprocess import preprocess_data
 
 class WaterPumpPredictor:
-    def __init__(self, model_type, numerical_preprocessing, categorical_preprocessing, data = None):
+    def __init__(self, model_type, numerical_preprocessing, categorical_preprocessing, processed_data=None):
         self.model_type = model_type
         self.numerical_preprocessing = numerical_preprocessing
         self.categorical_preprocessing = categorical_preprocessing
-        self.pipeline = None
+        self.processed_data = processed_data
+        self.numerical_features = []
+        self.categorical_features = []
+
+    def _select_model(self, trial):
         
-    def _select_model(self):
-        models = {
-            'RandomForestClassifier': RandomForestClassifier(n_estimators=100, max_depth=10, min_samples_split=5, n_jobs=-1),
-            'GradientBoostingClassifier': GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, subsample=0.8),
-            'HistGradientBoostingClassifier': HistGradientBoostingClassifier(max_iter=200, learning_rate=0.1, max_depth=10, min_samples_leaf=20),
-            'LogisticRegression': LogisticRegression(max_iter=500, penalty='l2', C=1.0, solver='lbfgs'),
-            'MLPClassifier': MLPClassifier(max_iter=400, hidden_layer_sizes=(100,), activation='relu', solver='adam', alpha=0.0001, learning_rate='constant')
-        }
+        model = None
+        if trial is not None:
+            if self.model_type == 'RandomForestClassifier':
+                model = RandomForestClassifier(
+                    n_estimators=trial.suggest_int('n_estimators', 100, 500),
+                    max_depth=trial.suggest_int('max_depth', 6, 30),
+                    min_samples_split=trial.suggest_int('min_samples_split', 2, 15),
+                    n_jobs=-1
+                )
+            elif self.model_type == 'GradientBoostingClassifier':
+                model = GradientBoostingClassifier(
+                    n_estimators=trial.suggest_int('n_estimators', 100, 500),
+                    learning_rate=trial.suggest_float('learning_rate', 0.01, 0.3),
+                    max_depth=trial.suggest_int('max_depth', 3, 10),
+                    subsample=trial.suggest_float('subsample', 0.5, 1.0)
+                )
+            elif self.model_type == 'LogisticRegression':
+                model = LogisticRegression(
+                    max_iter=trial.suggest_int('max_iter', 100, 1000),
+                    penalty=trial.suggest_categorical('penalty', ['l1', 'l2']),
+                    C=trial.suggest_float('C', 0.01, 10.0),
+                    solver='saga'
+                )
+            elif self.model_type == 'HistGradientBoostingClassifier':
+                model = HistGradientBoostingClassifier(
+                    max_iter=trial.suggest_int('max_iter', 200, 1000),
+                    learning_rate=trial.suggest_float('learning_rate', 0.01, 0.3),
+                    max_depth=trial.suggest_int('max_depth', 10, 30),
+                    min_samples_leaf=trial.suggest_int('min_samples_split', 20, 30),
+                )
+            elif self.model_type == 'MLPClassifier':
+                model = MLPClassifier(
+                    max_iter=trial.suggest_int('max_iter', 200, 1000),
+                    hidden_layer_sizes=(trial.suggest_int('hidden_layer', 50, 200),),
+                    activation=trial.suggest_categorical('activation', ['tanh', 'relu']),
+                    solver=trial.suggest_categorical('solver', ['sgd', 'adam']),
+                    alpha=trial.suggest_float('alpha', 0.0001, 0.01),
+                    learning_rate=trial.suggest_categorical('learning_rate', ['constant', 'adaptive']),
+                )
+            else: #just use lgositic regression as an alternative
+                model = LogisticRegression(
+                    max_iter=trial.suggest_int('max_iter', 100, 1000),
+                    penalty=trial.suggest_categorical('penalty', ['l1', 'l2']),
+                    C=trial.suggest_float('C', 0.01, 10.0),
+                    solver='saga'
+                )   
         
-        return models.get(self.model_type, models['RandomForestClassifier'])
+        return model
         
-    def build_pipeline(self, numerical_features, categorical_features):
+    def _build_pipeline(self, trial):
+        
+        #automatically finding the numerical and categorical features
+        self.numerical_features = self.processed_data.select_dtypes(exclude=['object', 'bool']).columns.drop(['id']).tolist()
+        self.categorical_features = self.processed_data.select_dtypes(include=['object', 'bool']).columns.drop('status_group').tolist()
+        
         #preprocessing pipelines
         numerical_transformers = []
         #fill in missing values
@@ -63,11 +113,11 @@ class WaterPumpPredictor:
 
 
         preprocessor = ColumnTransformer(transformers=[
-            ('num', Pipeline(numerical_transformers), numerical_features),
-            ('cat', Pipeline(categorical_transformers), categorical_features)
+            ('num', Pipeline(numerical_transformers), self.numerical_features),
+            ('cat', Pipeline(categorical_transformers), self.categorical_features)
         ])
 
-        model = self._select_model() #defaults to random forest classifier
+        model = self._select_model(trial)
 
         #selectfrommodel selects features based on their importance weights, (detrmined by estimator passed in)
         #log regression estimator, uses l1 to make more sparsity in co-efficients, prune coefficients that are less important (0)
@@ -78,88 +128,52 @@ class WaterPumpPredictor:
             # ('feature_selection', estimator),                       
             ('model', model)])
         
-        self.pipeline = pipeline
+        return pipeline
           
-    def train_and_evaluate(self, X, y):
-        #k-fold cross-validation
-        kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    def objective(self, trial):
+        #current pipeline of this trial
+        pipeline = self._build_pipeline(trial)
+        if self.processed_data is None:
+            raise ValueError("No preoprocessed data has been provided.")
         
-        start_time = time.time()
+        X_train, X_test, y_train, y_test = train_test_split(
+            self.processed_data.drop(['id', 'status_group'], axis=1),
+            self.processed_data['status_group'],
+            test_size=0.2,
+            random_state=42)
+        
+        
+        pipeline.fit(X_train, y_train)
+        predictions = pipeline.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        return accuracy
+        
 
-        scores = []
-        for fold, (train_index, test_index) in enumerate(kf.split(X), start=1):
-            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
-            y_train, y_test = y.iloc[train_index], y.iloc[test_index]
-            
-            fold_start_time = time.time()
-            
-            #fit the model 
-            self.pipeline.fit(X_train, y_train)
-            
-            # Predict and evaluate
-            predictions = self.pipeline.predict(X_test)
-            score = accuracy_score(y_test, predictions)
-            scores.append(score)
-            
-            fold_end_time = time.time()
-            
-            fold_elapsed_time = fold_end_time - fold_start_time
-            
-            #printing the progress
-            print(f"Fold {fold}: Accuracy = {score:.4f}")
-            print(f"Elapsed time for current fold: {fold_elapsed_time:.2f} seconds")
-
-        #printing overall performance
-        print(f"Average Cross-Validation Score: {np.mean(scores):.4f}")
-        return scores
-    
-    def predict_and_save(self, X, output_file):
-        #predict on the test set
-        test_data = preprocess_data(X)
-        X_test = test_data.drop('id', axis=1)
-        test_predictions = self.pipeline.predict(X_test)
-        
-        output_df = pd.DataFrame({'id': X['id'],'status_group': test_predictions})
-        
-        output_df.to_csv(output_file, index=False)      
 
 def main():
     #load and preprocess data
     train_values = pd.read_csv('data/training_set_values.csv')
     train_labels = pd.read_csv('data/training_set_labels.csv')
-    test_values = pd.read_csv('data/test_set_values.csv')
-    test_prediction_output_file = 'abcd.csv'
-    
+
     #merge datasets on 'id'
     data = train_values.merge(train_labels, on='id')
     
     processed_data = preprocess_data(data)
     
-    #automatically finding the numerical and categorical features
-    numerical_features = data.select_dtypes(exclude=['object', 'bool']).columns.drop(['id']).tolist()
-    categorical_features = data.select_dtypes(include=['object', 'bool']).columns.drop('status_group').tolist()
-    
     #initialise predictor
     predictor = WaterPumpPredictor(
-        model_type='GradientBoostingClassifier',
+        model_type='LogisticRegression',
         numerical_preprocessing='StandardScaler',
-        categorical_preprocessing='OneHotEncoder',
-        data=processed_data
+        categorical_preprocessing='OrdinalEncoder',
+        processed_data=processed_data,
     )
     
-    #building pipleine with numerical and categorical features
-    predictor.build_pipeline(numerical_features, categorical_features)
+    study = optuna.create_study(direction='maximize')
+    study.optimize(predictor.objective, n_trials=50)
     
+    print('Number of finished trials:', len(study.trials))
+    print('Best trial:', study.best_trial.params)
     
-    X_train = processed_data.drop(['id', 'status_group'], axis=1)
-    y_train = processed_data['status_group']
-    
-
-    #training and evaluation
-    scores = predictor.train_and_evaluate(X_train, y_train)
-    
-    #predict and save results
-    predictor.predict_and_save(test_values, test_prediction_output_file)
     
     
 if __name__ == '__main__':

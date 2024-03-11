@@ -14,11 +14,14 @@ import time
 from preprocess import preprocess_data
 
 class WaterPumpPredictor:
-    def __init__(self, model_type, numerical_preprocessing, categorical_preprocessing, data = None):
+    def __init__(self, model_type, numerical_preprocessing, categorical_preprocessing, processed_data):
         self.model_type = model_type
         self.numerical_preprocessing = numerical_preprocessing
         self.categorical_preprocessing = categorical_preprocessing
-        self.pipeline = None
+        self.processed_data = processed_data
+        self.numerical_features = []
+        self.categorical_feature = []
+        self.pipeline = self._build_pipeline()
         
     def _select_model(self):
         models = {
@@ -31,7 +34,11 @@ class WaterPumpPredictor:
         
         return models.get(self.model_type, models['RandomForestClassifier'])
         
-    def build_pipeline(self, numerical_features, categorical_features):
+    def _build_pipeline(self):
+        #automatically finding the numerical and categorical features
+        self.numerical_features = self.processed_data.select_dtypes(exclude=['object', 'bool']).columns.drop(['id']).tolist()
+        self.categorical_features = self.processed_data.select_dtypes(include=['object', 'bool']).columns.drop('status_group').tolist()
+        
         #preprocessing pipelines
         numerical_transformers = []
         #fill in missing values
@@ -63,8 +70,8 @@ class WaterPumpPredictor:
 
 
         preprocessor = ColumnTransformer(transformers=[
-            ('num', Pipeline(numerical_transformers), numerical_features),
-            ('cat', Pipeline(categorical_transformers), categorical_features)
+            ('num', Pipeline(numerical_transformers), self.numerical_features),
+            ('cat', Pipeline(categorical_transformers), self.categorical_features)
         ])
 
         model = self._select_model() #defaults to random forest classifier
@@ -78,7 +85,7 @@ class WaterPumpPredictor:
             # ('feature_selection', estimator),                       
             ('model', model)])
         
-        self.pipeline = pipeline
+        return pipeline
           
     def train_and_evaluate(self, X, y):
         #k-fold cross-validation
@@ -132,28 +139,21 @@ def main():
     
     #merge datasets on 'id'
     data = train_values.merge(train_labels, on='id')
-    
+
     processed_data = preprocess_data(data)
-    
-    #automatically finding the numerical and categorical features
-    numerical_features = data.select_dtypes(exclude=['object', 'bool']).columns.drop(['id']).tolist()
-    categorical_features = data.select_dtypes(include=['object', 'bool']).columns.drop('status_group').tolist()
     
     #initialise predictor
     predictor = WaterPumpPredictor(
         model_type='GradientBoostingClassifier',
         numerical_preprocessing='StandardScaler',
         categorical_preprocessing='OneHotEncoder',
-        data=processed_data
+        processed_data=processed_data,
     )
     
-    #building pipleine with numerical and categorical features
-    predictor.build_pipeline(numerical_features, categorical_features)
     
     
     X_train = processed_data.drop(['id', 'status_group'], axis=1)
     y_train = processed_data['status_group']
-    
 
     #training and evaluation
     scores = predictor.train_and_evaluate(X_train, y_train)
