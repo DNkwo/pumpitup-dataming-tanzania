@@ -77,7 +77,6 @@ class WaterPumpPredictor:
         return model
         
     def _build_pipeline(self, trial):
-        
         #automatically finding the numerical and categorical features
         self.numerical_features = self.processed_data.select_dtypes(exclude=['object', 'bool']).columns.drop(['id']).tolist()
         self.categorical_features = self.processed_data.select_dtypes(include=['object', 'bool']).columns.drop('status_group').tolist()

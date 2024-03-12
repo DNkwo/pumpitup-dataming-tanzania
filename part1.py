@@ -22,14 +22,15 @@ class WaterPumpPredictor:
         self.numerical_features = []
         self.categorical_feature = []
         self.pipeline = self._build_pipeline()
-        
+    
+    #uses the best hyperparameter optimisations from the HPO training    
     def _select_model(self):
         models = {
-            'RandomForestClassifier': RandomForestClassifier(n_estimators=100, max_depth=10, min_samples_split=5, n_jobs=-1),
-            'GradientBoostingClassifier': GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, subsample=0.8),
-            'HistGradientBoostingClassifier': HistGradientBoostingClassifier(max_iter=200, learning_rate=0.1, max_depth=10, min_samples_leaf=20),
-            'LogisticRegression': LogisticRegression(max_iter=500, penalty='l2', C=1.0, solver='lbfgs'),
-            'MLPClassifier': MLPClassifier(max_iter=400, hidden_layer_sizes=(100,), activation='relu', solver='adam', alpha=0.0001, learning_rate='constant')
+            'RandomForestClassifier': RandomForestClassifier(n_jobs=-1),
+            'GradientBoostingClassifier': GradientBoostingClassifier(),
+            'HistGradientBoostingClassifier': HistGradientBoostingClassifier(),
+            'LogisticRegression': LogisticRegression(),
+            'MLPClassifier': MLPClassifier()
         }
         
         return models.get(self.model_type, models['RandomForestClassifier'])
@@ -75,10 +76,6 @@ class WaterPumpPredictor:
         ])
 
         model = self._select_model() #defaults to random forest classifier
-
-        #selectfrommodel selects features based on their importance weights, (detrmined by estimator passed in)
-        #log regression estimator, uses l1 to make more sparsity in co-efficients, prune coefficients that are less important (0)
-        # estimator = SelectFromModel(LogisticRegression(max_iter=3000, penalty='l1', solver='liblinear'))
 
         pipeline = Pipeline(steps=[
             ('preprocessor', preprocessor),
@@ -144,13 +141,11 @@ def main():
     
     #initialise predictor
     predictor = WaterPumpPredictor(
-        model_type='GradientBoostingClassifier',
+        model_type='MLPClassifier',
         numerical_preprocessing='StandardScaler',
-        categorical_preprocessing='OneHotEncoder',
+        categorical_preprocessing='OrdinalEncoder',
         processed_data=processed_data,
     )
-    
-    
     
     X_train = processed_data.drop(['id', 'status_group'], axis=1)
     y_train = processed_data['status_group']

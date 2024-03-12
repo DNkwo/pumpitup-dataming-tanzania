@@ -2,7 +2,7 @@ import pandas as pd
 
 def preprocess_data(data):
     #reduce cardinality function (top n most categories, label rest as 'other')
-    def reduce_cardinality(df, column, n=100):
+    def reduce_cardinality(df, column, n=15):
         #grabs top n most categories
         top_n_categories = df[column].value_counts().nlargest(n).index
         #replace the rest with 'other'
@@ -36,5 +36,20 @@ def preprocess_data(data):
     data['year_recorded'] = data['date_recorded'].dt.year
     # drop original 'date_recorded' column
     data.drop('date_recorded', axis=1, inplace=True)
+    
+    
+    #-----------OMITTED CODE (manually completed instead)--------------#
+    #correlation-based feature elimination on numerical features
+    # corr_matrix = data[numerical_features].corr().abs()
+
+    # Select upper triangle of correlation matrix
+    # upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+
+    # find feature columns with correlation of greater than 0.95
+    # to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+
+    # Drop features 
+    # data = data.drop(to_drop, axis=1)
+    
     
     return data
